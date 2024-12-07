@@ -14,20 +14,34 @@ import io
 
 router = APIRouter()
 
-
+def normalize_bbox(bbox, width, height):
+    return [
+        int(1000 * (bbox[0] / width)),
+        int(1000 * (bbox[1] / height)),
+        int(1000 * (bbox[2] / width)),
+        int(1000 * (bbox[3] / height)),
+    ]
 @lru_cache(maxsize=1)
 def load_ocr_model():
     model = PaddleOCR(use_angle_cls=True, lang='en')
     return model
 
 
-def merge_data(values):
-    data = []
+def merge_data(values, width, height):
+    word = []
+    boxes  = []
     for idx in range(len(values)):
-        data.append([values[idx][1][0]])
-        # print(data[idx])
-
-    return data
+        box = values[idx][0]
+        left_corner = box[0]
+        right_corner = box[2]
+        x_left_corner = left_corner[0]
+        y_left_corner = left_corner[1]
+        x_right_corner = right_corner[0]
+        y_right_corner = right_corner[1]
+        text = values[idx][1][0];
+        word.append(text)
+        boxes.append(normalize_bbox([x_left_corner, y_left_corner, x_right_corner, y_right_corner], width, height))
+    return word, boxes
 
 
 def invoke_ocr(doc, content_type):
@@ -42,26 +56,31 @@ def invoke_ocr(doc, content_type):
     format_img = "JPEG"
     if content_type == "image/png":
         format_img = "PNG"
-
+    #get the image width and height
+    image_width = doc.width
+    image_height = doc.height
     doc.save(bytes_img, format=format_img)
     bytes_data = bytes_img.getvalue()
     bytes_img.close()
 
     result = model.ocr(bytes_data, cls=True)
-
     values = []
     for idx in range(len(result)):
         res = result[idx]
         for line in res:
             values.append(line)
 
-    values = merge_data(values)
+    word, boxes = merge_data(values, image_width, image_height)
 
     end_time = time.time()
     processing_time = end_time - start_time
     print(f"OCR done, worker PID: {worker_pid}")
+    result = {
+        'word': word,
+        'boxes': boxes
+    }
 
-    return values, processing_time
+    return result, processing_time
 
 
 @router.post("/inference")
